@@ -10,6 +10,43 @@
 #include "src/ISM330DHCX/ISM330DHCXSensor.h"
 #include "src/MAX3010x/MAX30105.h"
 
+#include <STM32duinoBLE.h>
+
+// STM32WB5MM BLE
+HCISharedMemTransportClass HCISharedMemTransport;
+#if !defined(FAKE_BLELOCALDEVICE)
+BLELocalDevice BLEObj(&HCISharedMemTransport);
+BLELocalDevice& BLE = BLEObj;
+#endif
+
+// Nordic UART service
+BLEService mainService("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
+BLECharacteristic rxChar("6E400002-B5A3-F393-E0A9-E50E24DCCA9E", BLEWrite, 20);
+BLECharacteristic txChar("6E400003-B5A3-F393-E0A9-E50E24DCCA9E", BLERead | BLENotify, 20);
+char txBuffer[20];
+
+void MyBLE_Init() {
+  // begin initialization
+  if (!BLE.begin()) {
+    Serial.println("starting BLE failed!");
+    while (1);
+  }
+
+  // set the device name peripheral advertises
+  BLE.setDeviceName("STM32WB5MM-DK");
+  // set the local name peripheral advertises
+  BLE.setLocalName("WB55 Sensor Node");
+  // set the UUID for the service this peripheral advertises
+  BLE.setAdvertisedService(mainService);
+  // add the characteristic to the service
+  mainService.addCharacteristic(rxChar);
+  mainService.addCharacteristic(txChar);
+  // add service
+  BLE.addService(mainService);
+  // start advertising
+  BLE.advertise();
+}
+
 // Communication
 TwoWire MyWire(PB11, PB13);
 HardwareSerial STLink(PIN_SERIAL_RX, PIN_SERIAL_TX);
@@ -79,6 +116,8 @@ void setup() {
   // Configure sensor with these settings
   particleSensor.setup(ledBrightness, sampleAverage, ledMode, sampleRate, pulseWidth, adcRange);
 
+  // Configure BLE
+  MyBLE_Init();
 }
 
 // the loop function runs over and over again forever
@@ -88,8 +127,13 @@ int32_t gyroscope[3];
 float temperature = 0.0;
 
 void loop() {
-  // Send raw data to plotter
-  STLink.println(particleSensor.getIR());
+  // Send raw data to serial plotter
+  uint32_t ir_reading = particleSensor.getIR();
+  STLink.println(ir_reading);
+
+  // Send raw data to BLE plotter
+  snprintf(txBuffer, 20, "%d\r\n", ir_reading);
+  txChar.setValue((unsigned char *) txBuffer, 20);
 
   // Clear buffer and draw header
 	u8g2.clearBuffer();
@@ -128,4 +172,7 @@ void loop() {
 	
   // Update buffer
   u8g2.sendBuffer();
+
+  // BLE handler
+  BLE.poll();
 }
